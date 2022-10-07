@@ -29,7 +29,7 @@ There are 3 main interfaces to use `EventPeople`:
 - Or extending `BaseListeners` and use it as a daemon.
 
 ### Using the Emitter
-You can emit events on your project passing an `eventPeople.Event` instance to the `eventPeople.Emitter.trigger` method. Doing this other services that are subscribed to these events will receive it.
+You can emit events on your project passing an `eventPeople.Event` instance to the `Emitter.trigger` method. Doing this other services that are subscribed to these events will receive it.
 
 ### Listeners
 
@@ -46,7 +46,7 @@ Other important aspect of event consumming is the result of the processing we pr
 - `fail:` should be called when an error ocurred processing the event and the message should be requeued;
 - `reject:` should be called whenever a message should be discarded without being processed.
 
-Given you want to consume a single event inside your project you can use the `eventPeople.Listener.on` method. It consumes a single event, given there are events available to be consumed with the given name pattern.
+Given you want to consume a single event inside your project you can use the `Listener.on` method. It consumes a single event, given there are events available to be consumed with the given name pattern.
 
 #### Multiple events routing
 
@@ -54,7 +54,7 @@ If your project needs to handle lots of events you can extend `BaseListeners` cl
 
 #### Creating a Daemon
 
-If you have the need to create a deamon to consume messages on background you can use the `eventPeople.Daemon.start` method to do so with ease. Just remember to define or import all the event bindings before starting the daemon.
+If you have the need to create a deamon to consume messages on background you can use the `Daemon.start` method to do so with ease. Just remember to define or import all the event bindings before starting the daemon.
 
 ## Implementations and Contributions
 
