@@ -1,25 +1,24 @@
 # EventPeople
 
-**EventPeople** is an open-source, technology-agnostic framework designed to simplify communication in event-based services. By leveraging a structured event naming convention and robust event handling mechanisms, EventPeople facilitates scalable and maintainable interactions between services sharing a queue.
+**EventPeople** is an open-source, technology-agnostic framework designed to simplify communication in event-based services, based on the [EventBus](https://github.com/EmpregoLigado/event_bus_rb) gem. By leveraging a structured event naming convention and robust event handling mechanisms, EventPeople facilitates scalable and maintainable interactions between services sharing a queue.
 
 ## Table of Contents
 
 1. [Introduction](#introduction)
-2. [Key Concepts](#key-concepts)
-3. [Event Naming Convention](#event-naming-convention)
-4. [Architecture Overview](#architecture-overview)
-5. [Class Structure and Responsibilities](#class-structure-and-responsibilities)
+2. [Event Naming Convention](#event-naming-convention)
+3. [Architecture Overview](#architecture-overview)
+4. [Class Structure and Responsibilities](#class-structure-and-responsibilities)
     - [Core Components](#core-components)
     - [Retry and Dead Letter Queue (DLQ) Components](#retry-and-dead-letter-queue-dlq-components)
-6. [Behavior and Workflow](#behavior-and-workflow)
+5. [Behavior and Workflow](#behavior-and-workflow)
     - [Emitting Events](#1-emitting-events)
     - [Consuming Events](#2-consuming-events)
     - [Running as a Daemon](#3-running-as-a-daemon)
     - [Retry and Dead Letter Queue (DLQ) Processing](#4-retry-and-dead-letter-queue-dlq-processing)
-7. [Usage Scenarios](#usage-scenarios)
-8. [Implementation Guidelines](#implementation-guidelines)
-9. [Future Enhancements](#future-enhancements)
-11. [License](#license)
+6. [Usage Scenarios](#usage-scenarios)
+7. [Implementation Guidelines](#implementation-guidelines)
+8. [Future Enhancements](#future-enhancements)
+9. [License](#license)
 
 ---
 
@@ -34,18 +33,6 @@ EventPeople is designed to streamline the communication of event-based services 
 - **Scalable Architecture:** Designed to handle large volumes of events seamlessly.
 - **Extensible Design:** Easily adaptable to support various message brokers and integration needs.
 - **Resilient Processing:** Built-in retry mechanisms and Dead Letter Queues ensure reliable event processing.
-
----
-
-## Key Concepts
-
-- **Event Emitter:** Component responsible for emitting events into the system.
-- **Event Listener:** Component that subscribes to and consumes events based on specified criteria.
-- **Event Broker:** Middleware facilitating the transmission of events between emitters and listeners (e.g., RabbitMQ).
-- **Daemon:** Background process that continuously listens for and processes events.
-- **Retry Logic:** Mechanism to attempt reprocessing of failed events a specified number of times.
-- **Dead Letter Queue (DLQ):** Mechanism to archive events that fail to process after all retry attempts.
-- **Retry Count:** A counter within each event that tracks the number of retry attempts made.
 
 ---
 
@@ -252,6 +239,8 @@ The following outlines the key classes/interfaces and their roles within EventPe
 #### 9. Rabbit (Package)
 
 The implementation in RabbitMQ relies on a central Topic which routes the events to the queues based on the event name (routing key). When a Listener is bound to an event name, the lib creates the queue if not available and binds it to the Topic, based on both specific (with the `.service_name` suffix) and the generic (with the `.all` suffix) routing keys.
+
+For more information about RabbitMQ concept check in this [link](https://www.rabbitmq.com/tutorials/amqp-concepts).
 
 ##### a. Topic
 
