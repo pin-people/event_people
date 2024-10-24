@@ -522,17 +522,18 @@ To streamline implementation, provide sensible default settings that can be over
 #### C. Dead Letter Queue (DLQ) Implementation
 
 1. **DLQ Setup:**
-   - For each primary queue, establish a corresponding DLQ using a standardized naming convention (e.g., `primary_queue_dlq`).
-   - Configure the message broker to route failed messages to the DLQ after exceeding retry limits.
-   - **Important:** The library automatically creates the DLQs and primary queues on startup but **does not** create virtual hosts (`vhost`) or topics/exchanges to avoid duplication or confusion.
+   - The library automatically creates DLQs and handles the routing of messages that have exceeded their retry attempts.
+   - Instead of relying on RabbitMQ's built-in DLQ strategy, EventPeople implements its own mechanism by routing messages to a designated DLQ queue, which is a regular queue used as a DLQ.
+   - The DLQ is created automatically by the library, following a standardized naming convention (e.g., `primary_queue_dlq`).
 
 2. **Processing DLQ Events:**
-   - Implement mechanisms to monitor and process events in the DLQ.
-   - Provide administrative tools or interfaces to inspect, reprocess, or discard DLQ events as necessary.
+   - Since the DLQ is a regular queue, messages in the DLQ are not automatically reprocessed.
+   - To reprocess dead messages, you need to manually move them back to the original queue.
+   - Implement mechanisms or administrative tools to monitor and manage events in the DLQ, including reprocessing or discarding them as necessary.
 
 3. **Logging and Alerts:**
-   - Log all events moved to the DLQ with detailed error information.
-   - We also recommend settting up alerting systems to notify relevant stakeholders when events are sent to the DLQ, enabling prompt investigation.
+   - The library logs all events moved to the DLQ with detailed error information.
+   - It's recommended to set up alerting systems to notify relevant stakeholders when events are sent to the DLQ, enabling prompt investigation.
 
 #### D. Simplified Listener Interface for Retry and DLQ
 
