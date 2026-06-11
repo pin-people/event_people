@@ -1,0 +1,485 @@
+spec_version: "1.1.0"
+released_at: "2026-06-11"
+
+# EventPeople Interface Contract
+#
+# This file is the single source of truth for the EventPeople public interface.
+# All implementations must conform to it. Deviations are documented in each
+# implementation's .event_people.yml file.
+#
+# Method and attribute names use camelCase here. Implementations adapt to their
+# language conventions:
+#   Ruby    -> snake_case methods, SCREAMING_SNAKE constants
+#   Python  -> snake_case methods, SCREAMING_SNAKE constants
+#   Go      -> PascalCase exported, camelCase private
+#   Node.js -> camelCase
+
+# ---------------------------------------------------------------------------
+# Naming Convention
+# ---------------------------------------------------------------------------
+naming_convention:
+  format: "resource.origin.action.destination"
+  destination_default: "all"
+  parts:
+    resource: "Entity related to the event (e.g. user, order, product)"
+    origin: "System emitting the event (e.g. auth_service, order_service)"
+    action: "Operation in simple past tense (e.g. created, updated, deleted)"
+    destination: "Target service. Optional — omit to broadcast to all consumers"
+  wildcards:
+    "*": "Matches exactly one word segment"
+    "#": "Matches zero or more word segments"
+  examples:
+    - "user.auth_service.created.all"
+    - "order.order_service.updated.payment_service"
+    - "user.*.created.all"
+    - "user.#.all"
+
+# ---------------------------------------------------------------------------
+# Routing Convention
+# CRITICAL for cross-language compatibility
+# ---------------------------------------------------------------------------
+routing_convention:
+  queue_name: "{appName}-{resource}.{origin}.{action}.all"
+  routing_key: "{resource}.{origin}.{action}.{destination}"
+  notes:
+    - "The appName prefix belongs ONLY in the queue name, never in the routing key."
+    - "Publishing routing key must be the clean event name without any prefix."
+    - "A listener on 'resource.origin.action' (3 parts) subscribes to BOTH .all and .{appName} queues."
+
+# ---------------------------------------------------------------------------
+# Environment Variables
+# ---------------------------------------------------------------------------
+environment_variables:
+  RABBIT_EVENT_PEOPLE_APP_NAME:
+    description: "Name of the application. Used as queue name prefix."
+    required: true
+  RABBIT_EVENT_PEOPLE_TOPIC_NAME:
+    description: "RabbitMQ topic exchange name."
+    required: true
+  RABBIT_EVENT_PEOPLE_VHOST:
+    description: "RabbitMQ virtual host."
+    required: true
+  RABBIT_URL:
+    description: "RabbitMQ connection URL (e.g. amqp://user:pass@host)."
+    required: true
+  RABBIT_EVENT_PEOPLE_MAX_RETRIES:
+    description: "Maximum retry attempts before dead-lettering. Overrides Config.maxAttempts default."
+    required: false
+    default: 3
+  RABBIT_EVENT_PEOPLE_RETRY_TTL_MS:
+    description: "Base delay in milliseconds for retry queues. Used as fixed delay or as initialDelay for exponential backoff."
+    required: false
+    default: 1000
+
+# ---------------------------------------------------------------------------
+# Components
+# ---------------------------------------------------------------------------
+components:
+
+  Config:
+    type: static_class
+    description: "Stores and provides configuration settings for EventPeople."
+    attributes:
+      - name: broker
+        description: "The active broker instance."
+        status: stable
+      - name: appName
+        env: RABBIT_EVENT_PEOPLE_APP_NAME
+        status: stable
+      - name: topicName
+        env: RABBIT_EVENT_PEOPLE_TOPIC_NAME
+        status: stable
+      - name: vhostName
+        env: RABBIT_EVENT_PEOPLE_VHOST
+        status: stable
+      - name: url
+        env: RABBIT_URL
+        status: stable
+      - name: fullUrl
+        description: "Complete connection string: {url}/{vhostName}"
+        status: stable
+      - name: maxAttempts
+        type: integer
+        default: 3
+        description: "Default maximum retry attempts per event."
+        status: pending
+      - name: delayStrategy
+        type: string
+        default: "exponential"
+        options: [fixed, exponential]
+        description: "Default retry delay strategy."
+        status: pending
+      - name: dlqName
+        type: string
+        description: "Default DLQ name. Defaults to {queue_name}_dlq if not set."
+        status: pending
+    methods:
+      - name: getBroker
+        returns: broker_instance
+        status: stable
+      - name: getRetryConfig
+        returns: "{ maxAttempts, delayStrategy, dlqName }"
+        status: pending
+
+  Event:
+    type: class
+    description: "Represents an event with its metadata and payload."
+    constructor:
+      signature: "new(name, body, schemaVersion = 1.0)"
+      notes:
+        - "retryCount is automatically initialized to 0."
+        - "If name has 3 parts, .all is appended automatically."
+    attributes:
+      - name: name
+        type: string
+        description: "Full event name: resource.origin.action.destination"
+        status: stable
+      - name: headers
+        type: object
+        description: "Event metadata object. JSON keys must be camelCase."
+        fields: [appName, resource, origin, action, destination, schemaVersion]
+        json_key_style: camelCase
+        status: stable
+      - name: body
+        type: "object (hash/dictionary)"
+        description: "Main content of the event."
+        status: stable
+      - name: schemaVersion
+        type: float
+        default: 1.0
+        status: stable
+      - name: retryCount
+        type: integer
+        default: 0
+        description: "Number of retry attempts. Auto-initialized to 0 on construction."
+        status: pending
+    methods:
+      - name: payload
+        returns: "JSON string: { headers, body }"
+        status: stable
+      - name: hasBody
+        returns: boolean
+        status: stable
+      - name: hasName
+        returns: boolean
+        status: stable
+      - name: buildPayload
+        description: "Parses inbound payload, splitting headers from body."
+        visibility: private
+        status: stable
+      - name: generateHeaders
+        visibility: private
+        status: stable
+      - name: fixName
+        description: "Appends .all to event name when destination segment is absent."
+        visibility: private
+        status: stable
+      - name: incrementRetryCount
+        description: "Increases retryCount by one."
+        status: pending
+
+  Listener:
+    type: static_class
+    description: "Entry point for subscribing to events."
+    methods:
+      - name: on
+        signature: "on(eventName, callback, maxAttempts=null, delayStrategy=null, dlqName=null)"
+        description: >
+          Subscribe to a specific event or pattern. When eventName has 3 parts,
+          the lib subscribes to both the .all and .{appName} variants automatically.
+          Retry params fall back to Config defaults when omitted.
+        params:
+          - { name: eventName, type: string, required: true }
+          - { name: callback, type: function, required: true }
+          - { name: maxAttempts, type: integer, required: false, status: pending }
+          - { name: delayStrategy, type: string, required: false, status: pending }
+          - { name: dlqName, type: string, required: false, status: pending }
+        status: stable
+
+  Emitter:
+    type: static_class
+    methods:
+      - name: trigger
+        signature: "trigger(events)"
+        description: "Emit one or multiple events to the broker. Validates name and body presence."
+        params:
+          - { name: events, type: "Event | Event[]", required: true }
+        status: stable
+
+  Daemon:
+    type: static_class
+    description: "Manages background process for continuous event consumption."
+    methods:
+      - name: start
+        description: "Binds all registered listeners and starts consuming."
+        status: stable
+      - name: stop
+        description: "Closes broker connection and terminates the process."
+        status: stable
+      - name: bindSignals
+        description: "Traps SIGTERM and SIGINT for graceful shutdown."
+        status: stable
+
+  Context:
+    type: interface
+    description: "Passed to every user callback. Informs the broker of processing outcome."
+    attributes:
+      - name: maxRetries
+        type: integer
+        description: "Total retry attempts configured for this listener."
+        status: pending
+      - name: isLastRetry
+        type: boolean
+        description: "True when this is the final retry attempt."
+        status: pending
+    methods:
+      - name: success
+        description: "Acknowledge successful processing (ack). Removes message from queue."
+        status: stable
+      - name: fail
+        description: "Indicate failure. Requeues message and activates retry/DLQ rules (nack, requeue=true)."
+        status: stable
+      - name: reject
+        description: "Reject event. Routes directly to DLQ without retrying (nack, requeue=false)."
+        status: stable
+
+  BaseListener:
+    type: class
+    description: "Base class for user-defined listener classes."
+    attributes:
+      - name: context
+        type: Context
+        status: stable
+    methods:
+      - name: callback
+        signature: "callback(function, event, maxAttempts=null, delayStrategy=null, dlqName=null)"
+        description: "Wraps broker delivery into Event + Context and dispatches to the user method."
+        status: stable
+      - name: bindEvent
+        signature: "bindEvent(function, eventName)"
+        description: "Registers a method bound to an event name in ListenersManager."
+        status: stable
+      - name: success
+        description: "Delegates to context.success()."
+        status: stable
+      - name: fail
+        description: "Delegates to context.fail()."
+        status: stable
+      - name: reject
+        description: "Delegates to context.reject()."
+        status: stable
+      - name: fixedEventName
+        signature: "fixedEventName(eventName, postfix)"
+        description: "Returns event name with postfix applied to the destination segment."
+        visibility: private
+        status: stable
+
+  ListenersManager:
+    type: static_class
+    description: "Registry of all listener configurations. Used by Daemon."
+    attributes:
+      - name: listeners
+        type: array
+        description: "All registered listener configurations."
+        status: stable
+    methods:
+      - name: bindAllListeners
+        description: "Subscribes all registered configurations via the broker."
+        status: stable
+      - name: addListener
+        signature: "addListener(configuration)"
+        description: "Adds a configuration object: { listenerClass, callback, eventName }."
+        status: stable
+
+  BaseBroker:
+    type: interface
+    description: "Defines the contract all broker implementations must fulfill."
+    methods:
+      - name: getConsumers
+        returns: consumers
+        status: stable
+      - name: getConnection
+        returns: connection
+        status: stable
+      - name: consume
+        signature: "consume(eventName, callback)"
+        status: stable
+      - name: produce
+        signature: "produce(events)"
+        status: stable
+      - name: closeConnection
+        status: stable
+
+  RabbitBroker:
+    type: class
+    implements: BaseBroker
+    description: "RabbitMQ implementation of BaseBroker."
+    attributes:
+      - name: connection
+      - name: consumers
+      - name: channel
+      - name: session
+      - name: topic
+      - name: queue
+      - name: rabbitUrl
+    methods:
+      - name: getConsumers
+        status: stable
+      - name: getConnection
+        status: stable
+      - name: consume
+        signature: "consume(eventName, callback)"
+        status: stable
+      - name: produce
+        signature: "produce(events)"
+        status: stable
+      - name: closeConnection
+        status: stable
+
+  RabbitContext:
+    type: class
+    implements: Context
+    description: "RabbitMQ-specific context implementation."
+    attributes:
+      - name: channel
+      - name: deliveryInfo
+      - name: maxRetries
+        status: pending
+      - name: isLastRetry
+        status: pending
+      - name: dlqName
+        status: pending
+    methods:
+      - name: success
+        description: "basic_ack on the delivery tag."
+        status: stable
+      - name: fail
+        description: "basic_nack with requeue=true."
+        status: stable
+      - name: reject
+        description: "basic_nack with requeue=false."
+        status: stable
+
+  Topic:
+    type: class
+    description: "Manages the RabbitMQ topic exchange."
+    attributes:
+      - name: channel
+      - name: topic
+    methods:
+      - name: getTopic
+        description: "Declares the exchange (passive=true) and returns its reference."
+        status: stable
+      - name: getChannel
+        status: stable
+      - name: produce
+        signature: "produce(event)"
+        description: "Publishes event payload to the exchange using event.name as routing key."
+        status: stable
+      - name: topicOptions
+        visibility: private
+        status: stable
+
+  Queue:
+    type: class
+    description: "Manages RabbitMQ queues — declaration, binding, and consumption."
+    attributes:
+      - name: channel
+      - name: topic
+    methods:
+      - name: subscribe
+        signature: "subscribe(routingKey, callback)"
+        description: "Declares queue, binds to topic, and starts consuming."
+        status: stable
+      - name: queueName
+        signature: "queueName(routingKey)"
+        description: "Returns '{appName}-{resource}.{origin}.{action}.all' (always ends in .all)."
+        visibility: private
+        status: stable
+      - name: callback
+        description: "Builds Event + Context from broker delivery and calls user callback."
+        visibility: private
+        status: stable
+      - name: queueOptions
+        visibility: private
+        status: stable
+
+  RetryManager:
+    type: internal_static_class
+    status: pending
+    description: >
+      Internal component managing retry policies and dead-lettering. Not exposed to users.
+      Implemented via a per-queue retry queue (custom) and RabbitMQ native DLX (for DLQ routing).
+    rabbit_topology:
+      retry_queue:
+        name: "{queue_name}_retry"
+        durable: true
+        args:
+          x-dead-letter-exchange: '""  (default exchange)'
+          x-dead-letter-routing-key: "{queue_name}"
+        notes: "Declared without queue-level TTL. Each message carries its own expiration property to support variable per-attempt delays."
+      dlx_exchange:
+        name: "{appName}_dlx"
+        type: fanout
+        durable: true
+        notes: "Per-app. All main queues declare x-dead-letter-exchange pointing here."
+      dlq_queue:
+        name: "{appName}_dlq"
+        durable: true
+        binding: "bound to {appName}_dlx with empty routing key"
+        notes: "RabbitMQ automatically adds x-death headers (origin queue, reason, timestamp, routing-keys) to every dead-lettered message."
+      main_queue_extra_arg:
+        x-dead-letter-exchange: "{appName}_dlx"
+    attributes:
+      - name: maxAttempts
+        status: pending
+      - name: initialDelay
+        type: integer
+        default: 1000
+        description: "Initial delay in milliseconds (from RABBIT_EVENT_PEOPLE_RETRY_TTL_MS)."
+        status: pending
+      - name: maxDelay
+        type: integer
+        default: 600000
+        description: "Maximum delay in milliseconds (10 minutes)."
+        status: pending
+      - name: currentAttempt
+        status: pending
+    methods:
+      - name: shouldRetry
+        description: "Returns true if currentAttempt < maxAttempts."
+        status: pending
+      - name: getNextDelay
+        description: >
+          Calculates next delay in milliseconds.
+          Exponential: min(initialDelay * (5 ^ currentAttempt), maxDelay).
+          Fixed: initialDelay (constant).
+        status: pending
+      - name: incrementAttempt
+        status: pending
+      - name: reset
+        description: "Resets currentAttempt to 0 for a new event."
+        status: pending
+
+# ---------------------------------------------------------------------------
+# Retry and DLQ Defaults
+# ---------------------------------------------------------------------------
+retry_defaults:
+  maxAttempts: 3
+  naming:
+    retry_queue_suffix: "_retry"
+    dlx_suffix: "_dlx"
+    dlq_suffix: "_dlq"
+  strategies:
+    exponential:
+      initialDelay: 1000
+      multiplier: 5
+      maxDelay: 600000
+    fixed:
+      delay: 1000
+  retry_header: "x-event-people-retries"
+  notes:
+    - "retryCount is tracked via the AMQP header x-event-people-retries on messages in the retry queue."
+    - "When consuming from the main queue, implementations must read this header and populate event.retryCount."
+    - "The retry queue expiration property (per-message TTL) must be set to the calculated delay for the current attempt."
+    - "On fail() with retries exhausted or on reject(): nack(requeue=false) triggers native DLX routing to DLQ."

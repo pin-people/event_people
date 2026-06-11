@@ -521,17 +521,24 @@ To streamline implementation, provide sensible default settings that can be over
 
 #### C. Dead Letter Queue (DLQ) Implementation
 
-1. **DLQ Setup:**
-   - The library automatically creates DLQs and handles the routing of messages that have exceeded their retry attempts.
-   - Instead of relying on RabbitMQ's built-in DLQ strategy, EventPeople implements its own mechanism by routing messages to a designated DLQ queue, which is a regular queue used as a DLQ.
-   - The DLQ is created automatically by the library, following a standardized naming convention (e.g., `primary_queue_dlq`).
+EventPeople uses RabbitMQ's native dead-letter exchange (DLX) mechanism for DLQ routing, combined with a custom per-queue retry queue for bounded retries with configurable delay.
 
-2. **Processing DLQ Events:**
-   - Since the DLQ is a regular queue, messages in the DLQ are not automatically reprocessed.
-   - To reprocess dead messages, you need to manually move them back to the original queue.
-   - Implement mechanisms or administrative tools to monitor and manage events in the DLQ, including reprocessing or discarding them as necessary.
+1. **RabbitMQ Topology (created automatically on subscribe):**
+   - **Retry queue** (`{queue_name}_retry`): per-queue, durable. Messages carry a per-message `expiration` property so fixed and exponential delays are both supported without a queue-level TTL. Dead-letters back to the main queue via the default exchange after the delay expires.
+   - **Dead-letter exchange** (`{appName}_dlx`): per-app fanout exchange, durable. All main queues declare `x-dead-letter-exchange` pointing here.
+   - **Dead Letter Queue** (`{appName}_dlq`): per-app, durable queue bound to the DLX. RabbitMQ automatically attaches `x-death` headers to every dead-lettered message containing the origin queue name, reason, timestamp, and routing keys — no origin information is lost.
 
-3. **Logging and Alerts:**
+2. **Routing flow:**
+   - `fail()` with retries remaining → calculate delay → publish to `{queue_name}_retry` with `expiration` = delay ms → ack current delivery
+   - `fail()` with retries exhausted → `nack(requeue=false)` → DLX routes to `{appName}_dlq`
+   - `reject()` → `nack(requeue=false)` → DLX routes to `{appName}_dlq`
+
+3. **Processing DLQ Events:**
+   - Messages in the DLQ are not automatically reprocessed.
+   - To reprocess dead messages, move them back to the original queue manually or via an administrative tool.
+   - The `x-death` headers provide full context about the failure chain.
+
+4. **Logging and Alerts:**
    - The library logs all events moved to the DLQ with detailed error information.
    - It's recommended to set up alerting systems to notify relevant stakeholders when events are sent to the DLQ, enabling prompt investigation.
 
