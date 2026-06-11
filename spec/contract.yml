@@ -44,7 +44,7 @@ routing_convention:
   notes:
     - "The appName prefix belongs ONLY in the queue name, never in the routing key."
     - "Publishing routing key must be the clean event name without any prefix."
-    - "A listener on 'resource.origin.action' (3 parts) subscribes to BOTH .all and .{appName} queues."
+    - "A listener on 'resource.origin.action' (3 parts) creates ONE queue ({appName}-resource.origin.action.all) with TWO exchange bindings: routing key resource.origin.action.all AND routing key resource.origin.action.{appName}. A second physical queue must NOT be created."
 
 # ---------------------------------------------------------------------------
 # Environment Variables
