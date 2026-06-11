@@ -17,26 +17,6 @@ When a MAJOR or MINOR version is released, all implementations should update the
 
 ---
 
-## [2.0.0] — 2026-06-11
-
-### Breaking — Queue naming convention corrected
-
-**Queue name changes from `{appName}-{resource}.{origin}.{action}.all` to `{appName}-{resource}.{origin}.{action}.{appName}`.**
-
-The destination segment in the queue name now identifies the consuming service (its `appName`) rather than the broadcast placeholder `.all`. This correctly models queue ownership and allows multiple services to each have their own queue for the same event type.
-
-Migration: existing queues ending in `.all` must be deleted and recreated before deploying updated consumers. Drain the queue before deletion to avoid losing messages.
-
-#### Updated routing convention
-- Queue: `{appName}-{resource}.{origin}.{action}.{appName}` (destination = consuming app)
-- Binding 1: routing key `resource.origin.action.{appName}` (targeted messages)
-- Binding 2: routing key `resource.origin.action.all` (broadcast messages)
-- `queueName()` must normalize the destination segment to `{appName}` regardless of input routing key (`.all` or `{appName}` both resolve to the same queue)
-
-Includes all additions from the abandoned [1.1.0] release (retry/DLQ API surface, new env vars, RabbitMQ topology).
-
----
-
 ## [1.1.0] — 2026-06-11
 
 ### Added — Retry and Dead Letter Queue (DLQ)
