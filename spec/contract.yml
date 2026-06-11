@@ -1,4 +1,4 @@
-spec_version: "1.1.0"
+spec_version: "2.0.0"
 released_at: "2026-06-11"
 
 # EventPeople Interface Contract
@@ -39,12 +39,14 @@ naming_convention:
 # CRITICAL for cross-language compatibility
 # ---------------------------------------------------------------------------
 routing_convention:
-  queue_name: "{appName}-{resource}.{origin}.{action}.all"
+  queue_name: "{appName}-{resource}.{origin}.{action}.{appName}"
   routing_key: "{resource}.{origin}.{action}.{destination}"
   notes:
-    - "The appName prefix belongs ONLY in the queue name, never in the routing key."
+    - "The appName prefix belongs ONLY in the queue name prefix, never in the routing key."
     - "Publishing routing key must be the clean event name without any prefix."
-    - "A listener on 'resource.origin.action' (3 parts) creates ONE queue ({appName}-resource.origin.action.all) with TWO exchange bindings: routing key resource.origin.action.all AND routing key resource.origin.action.{appName}. A second physical queue must NOT be created."
+    - "The queue name identifies its owner: the destination segment is always the consuming service's appName."
+    - "A listener on 'resource.origin.action' (3 parts) creates ONE queue ({appName}-resource.origin.action.{appName}) with TWO exchange bindings: routing key resource.origin.action.{appName} (targeted) AND routing key resource.origin.action.all (broadcast). A second physical queue must NOT be created."
+    - "queueName() must always normalize the destination segment to {appName}, regardless of whether the input routing key ends in .all or .{appName}."
 
 # ---------------------------------------------------------------------------
 # Environment Variables
@@ -393,7 +395,7 @@ components:
         status: stable
       - name: queueName
         signature: "queueName(routingKey)"
-        description: "Returns '{appName}-{resource}.{origin}.{action}.all' (always ends in .all)."
+        description: "Returns '{appName}-{resource}.{origin}.{action}.{appName}'. Always normalizes the destination segment to the consuming service's appName, regardless of input routing key."
         visibility: private
         status: stable
       - name: callback
