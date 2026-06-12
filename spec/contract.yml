@@ -238,7 +238,13 @@ components:
         description: "Acknowledge successful processing (ack). Removes message from queue."
         status: stable
       - name: fail
-        description: "Indicate failure. Requeues message and activates retry/DLQ rules (nack, requeue=true)."
+        description: >
+          Indicate failure. Publishes the message to the retry queue with a backoff delay when
+          retries remain, then acks the original delivery. When retries are exhausted, or when
+          publishing to the retry queue itself fails (broker unavailable, channel closed),
+          implementations MUST nack(requeue=false) so the DLX routes the message to the DLQ.
+          Nacking with requeue=true on publish failure causes an infinite redelivery loop because
+          x-event-people-retries is never incremented.
         status: stable
       - name: reject
         description: "Reject event. Routes directly to DLQ without retrying (nack, requeue=false)."
@@ -355,7 +361,10 @@ components:
         description: "basic_ack on the delivery tag."
         status: stable
       - name: fail
-        description: "basic_nack with requeue=true."
+        description: >
+          Publishes to the retry queue (with per-message TTL expiration) when retries remain, then
+          acks. Nacks without requeue (nack(requeue=false)) when retries are exhausted OR when the
+          publish to the retry queue itself fails. Never nacks with requeue=true on publish failure.
         status: stable
       - name: reject
         description: "basic_nack with requeue=false."
@@ -484,3 +493,4 @@ retry_defaults:
     - "When consuming from the main queue, implementations must read this header and populate event.retryCount."
     - "The retry queue expiration property (per-message TTL) must be set to the calculated delay for the current attempt."
     - "On fail() with retries exhausted or on reject(): nack(requeue=false) triggers native DLX routing to DLQ."
+    - "On fail() when publishing to the retry queue fails (broker error, channel unavailable): implementations MUST nack(requeue=false), NOT nack(requeue=true). Requeuing without incrementing x-event-people-retries causes an infinite redelivery loop (SOPHIA-1G class). DLQ-early is recoverable via replay; infinite loop is not."

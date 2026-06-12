@@ -17,6 +17,21 @@ When a MAJOR or MINOR version is released, all implementations should update the
 
 ---
 
+## [1.1.1] — 2026-06-12
+
+### Fixed
+
+- **`Context.fail()` fallback on publish failure**: clarified that when publishing to the retry
+  queue fails (broker error, channel unavailable), implementations MUST `nack(requeue=false)` —
+  NOT `nack(requeue=true)`. Requeuing without incrementing `x-event-people-retries` causes an
+  unbounded redelivery loop (SOPHIA-1G class) in broker-instability scenarios. DLQ-early via
+  `nack(requeue=false)` is recoverable via replay; an infinite loop is not.
+- Updated `Context.fail()` and `RabbitContext.fail()` descriptions in `spec/contract.yml` to
+  reflect the correct behavior (previous descriptions referenced obsolete `nack(requeue=true)`
+  semantics from pre-RetryManager versions).
+
+---
+
 ## [1.1.0] — 2026-06-11
 
 ### Added — Retry and Dead Letter Queue (DLQ)
