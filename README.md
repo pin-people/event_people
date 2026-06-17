@@ -1,5 +1,10 @@
 # EventPeople
 
+> **Spec version: v1.1.1.** Dead-lettering is **application-level**: the main queue
+> is declared with **no** `x-dead-letter-exchange` argument and the library publishes
+> failed messages to a plain `<app>_dlq` queue. See [`COMPATIBILITY.md`](./COMPATIBILITY.md)
+> for the version-by-version behavior matrix and migration notes.
+
 **EventPeople** is an open-source, technology-agnostic framework designed to simplify communication in event-based services, based on the [EventBus](https://github.com/EmpregoLigado/event_bus_rb) gem. By leveraging a structured event naming convention and robust event handling mechanisms, EventPeople facilitates scalable and maintainable interactions between services sharing a queue.
 
 ## Table of Contents
@@ -525,6 +530,19 @@ To streamline implementation, provide sensible default settings that can be over
    - The library automatically creates DLQs and handles the routing of messages that have exceeded their retry attempts.
    - Instead of relying on RabbitMQ's built-in DLQ strategy, EventPeople implements its own mechanism by routing messages to a designated DLQ queue, which is a regular queue used as a DLQ.
    - The DLQ is created automatically by the library, following a standardized naming convention (e.g., `primary_queue_dlq`).
+   - **Normative (v1.1.1):** the **main queue MUST be declared without any `x-dead-letter-exchange`
+     argument** (and without any other dead-letter argument). Routing to the DLQ is performed by the
+     library publishing the failed message directly to `<app>_dlq` (via the default exchange) and
+     acking the original delivery — on `reject()` and on retry exhaustion. Implementations MUST NOT
+     declare a dead-letter-exchange (DLX) fanout or bind the DLQ to one.
+   - **Rationale:** queue arguments are immutable in RabbitMQ. Declaring `x-dead-letter-exchange` on
+     the main queue makes a library upgrade fail with `PRECONDITION_FAILED` over queues created by an
+     earlier (argument-free) version, and forces a destructive delete/recreate per environment.
+     Keeping the main queue argument-free makes upgrades drop-in, with **no broker policy and no manual
+     queue step** in any environment.
+   - The **retry queue** (`<queue>_retry`) is unaffected: it is a new queue created by this version and
+     keeps its per-message TTL plus a dead-letter back to the **default** exchange (routing key = the
+     original queue) to implement bounded backoff.
 
 2. **Processing DLQ Events:**
    - Since the DLQ is a regular queue, messages in the DLQ are not automatically reprocessed.
