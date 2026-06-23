@@ -1,4 +1,4 @@
-spec_version: "1.1.0"
+spec_version: "1.2.0"
 released_at: "2026-06-11"
 
 # EventPeople Interface Contract
@@ -240,14 +240,19 @@ components:
       - name: fail
         description: >
           Indicate failure. Publishes the message to the retry queue with a backoff delay when
-          retries remain, then acks the original delivery. When retries are exhausted, or when
-          publishing to the retry queue itself fails (broker unavailable, channel closed),
-          implementations MUST nack(requeue=false) so the DLX routes the message to the DLQ.
-          Nacking with requeue=true on publish failure causes an infinite redelivery loop because
-          x-event-people-retries is never incremented.
+          retries remain, then acks the original delivery. When retries are exhausted, the
+          implementation publishes the message to the {appName}_dlq queue (default exchange) and
+          acks the original delivery. Fallback: if publishing (to the retry queue or to the DLQ)
+          fails — broker unavailable, channel closed, no DLQ name — implementations MUST
+          nack(requeue=false) so the message is not silently lost. Nacking with requeue=true on
+          publish failure causes an infinite redelivery loop because x-event-people-retries is
+          never incremented.
         status: stable
       - name: reject
-        description: "Reject event. Routes directly to DLQ without retrying (nack, requeue=false)."
+        description: >
+          Reject event without retrying. Publishes the message directly to the {appName}_dlq queue
+          (default exchange) and acks the original delivery; on publish failure, falls back to
+          nack(requeue=false).
         status: stable
 
   BaseListener:
@@ -419,27 +424,26 @@ components:
     status: pending
     description: >
       Internal component managing retry policies and dead-lettering. Not exposed to users.
-      Implemented via a per-queue retry queue (custom) and RabbitMQ native DLX (for DLQ routing).
+      Implemented via a per-queue retry queue (custom) and application-level publishing to the DLQ
+      (no native DLX). As of spec v1.2.0 the main queue carries NO dead-letter argument.
     rabbit_topology:
+      main_queue:
+        name: "{queue_name}"
+        durable: true
+        args: "none — MUST NOT declare x-dead-letter-exchange or any other dead-letter argument (spec v1.2.0)"
+        notes: "Argument-free so library upgrades are drop-in (queue arguments are immutable; a changed arg triggers PRECONDITION_FAILED)."
       retry_queue:
         name: "{queue_name}_retry"
         durable: true
         args:
           x-dead-letter-exchange: '""  (default exchange)'
           x-dead-letter-routing-key: "{queue_name}"
-        notes: "Declared without queue-level TTL. Each message carries its own expiration property to support variable per-attempt delays."
-      dlx_exchange:
-        name: "{appName}_dlx"
-        type: fanout
-        durable: true
-        notes: "Per-app. All main queues declare x-dead-letter-exchange pointing here."
+        notes: "A new queue (not the main queue): keeping its dead-letter arg is safe. Declared without queue-level TTL; each message carries its own expiration property to support variable per-attempt delays. After the TTL the message dead-letters back to the main queue via the default exchange."
       dlq_queue:
         name: "{appName}_dlq"
         durable: true
-        binding: "bound to {appName}_dlx with empty routing key"
-        notes: "RabbitMQ automatically adds x-death headers (origin queue, reason, timestamp, routing-keys) to every dead-lettered message."
-      main_queue_extra_arg:
-        x-dead-letter-exchange: "{appName}_dlx"
+        binding: "none — plain queue, not bound to any exchange. The library publishes to it via the default exchange (routing key = the DLQ name)."
+        notes: "Each dead-lettered message carries an x-event-people-retries header with the retry count at the time it was dead-lettered (the library sets it; no x-death headers, since there is no DLX)."
     attributes:
       - name: maxAttempts
         status: pending
@@ -478,7 +482,6 @@ retry_defaults:
   maxAttempts: 3
   naming:
     retry_queue_suffix: "_retry"
-    dlx_suffix: "_dlx"
     dlq_suffix: "_dlq"
   strategies:
     exponential:
@@ -492,5 +495,5 @@ retry_defaults:
     - "retryCount is tracked via the AMQP header x-event-people-retries on messages in the retry queue."
     - "When consuming from the main queue, implementations must read this header and populate event.retryCount."
     - "The retry queue expiration property (per-message TTL) must be set to the calculated delay for the current attempt."
-    - "On fail() with retries exhausted or on reject(): nack(requeue=false) triggers native DLX routing to DLQ."
-    - "On fail() when publishing to the retry queue fails (broker error, channel unavailable): implementations MUST nack(requeue=false), NOT nack(requeue=true). Requeuing without incrementing x-event-people-retries causes an infinite redelivery loop (SOPHIA-1G class). DLQ-early is recoverable via replay; infinite loop is not."
+    - "On fail() with retries exhausted or on reject(): publish the message to {appName}_dlq (default exchange, routing key = DLQ name) and ack the original delivery. The main queue has no DLX, so dead-lettering is done by the library, not the broker."
+    - "On publish failure (to the retry queue or to the DLQ — broker error, channel unavailable, no DLQ name): implementations MUST nack(requeue=false), NOT nack(requeue=true). Requeuing without incrementing x-event-people-retries causes an infinite redelivery loop (SOPHIA-1G class). DLQ-early / nack(requeue=false) is recoverable via replay; infinite loop is not."

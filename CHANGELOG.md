@@ -17,6 +17,36 @@ When a MAJOR or MINOR version is released, all implementations should update the
 
 ---
 
+## [1.2.0] — 2026-06-23
+
+### Changed — DLQ topology is now application-level (§C)
+
+- **Main queue MUST be declared without `x-dead-letter-exchange`** (or any other dead-letter argument).
+  The previous v1.1.x design declared `x-dead-letter-exchange` on every main queue and bound a per-app
+  DLQ to a `{appName}_dlx` fanout.
+- **Dead-lettering moves to the application level**: on `reject()` and on retry exhaustion, the library
+  publishes the failed message directly to a plain `{appName}_dlq` queue (default exchange) and **acks**
+  the original delivery. **Fallback**: if that publish fails (or no channel/DLQ is available),
+  implementations MUST `nack(requeue=false)` so the message is not silently lost.
+- The DLQ is now a **plain durable queue**, not bound to any DLX. Dead-lettered messages carry an
+  `x-event-people-retries` header instead of relying on RabbitMQ's `x-death` headers.
+- The retry queue (`{queue_name}_retry`) is unchanged: per-message `expiration` TTL, dead-letters back to
+  the main queue via the default exchange.
+
+### Rationale
+
+Queue arguments are immutable in RabbitMQ. Declaring `x-dead-letter-exchange` on the main queue made a
+library upgrade fail with `PRECONDITION_FAILED` over queues created by an earlier (argument-free) version,
+forcing a destructive delete/recreate per environment. Keeping the main queue argument-free makes upgrades
+drop-in — no broker policy and no manual queue step.
+
+### Implementation status
+
+- **Go `v0.4.1`** conforms. Ruby/Python/Node still implement the v1.1.x native-DLX topology and now deviate
+  (see `COMPATIBILITY.md`); their migration is tracked as follow-up.
+
+---
+
 ## [1.1.1] — 2026-06-12
 
 ### Fixed

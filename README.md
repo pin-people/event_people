@@ -1,5 +1,10 @@
 # EventPeople
 
+> **Spec version: v1.2.0.** Dead-lettering is **application-level**: the main queue is declared with
+> **no** `x-dead-letter-exchange` argument and the library publishes failed messages to a plain
+> `<app>_dlq` queue. This is a topology change from the v1.1.x native-DLX design — see §C and
+> [`COMPATIBILITY.md`](./COMPATIBILITY.md) for the behavior matrix and migration notes.
+
 **EventPeople** is an open-source, technology-agnostic framework designed to simplify communication in event-based services, based on the [EventBus](https://github.com/EmpregoLigado/event_bus_rb) gem. By leveraging a structured event naming convention and robust event handling mechanisms, EventPeople facilitates scalable and maintainable interactions between services sharing a queue.
 
 ## Table of Contents
@@ -521,22 +526,45 @@ To streamline implementation, provide sensible default settings that can be over
 
 #### C. Dead Letter Queue (DLQ) Implementation
 
-EventPeople uses RabbitMQ's native dead-letter exchange (DLX) mechanism for DLQ routing, combined with a custom per-queue retry queue for bounded retries with configurable delay.
+EventPeople routes dead messages at the **application level**: the library publishes the failed
+message directly to a plain `<app>_dlq` queue and acks the original delivery. It does **not** rely on
+RabbitMQ's native dead-letter-exchange (DLX) mechanism, and the main queue carries **no**
+`x-dead-letter-exchange` argument. A custom per-queue retry queue still provides bounded retries with
+configurable delay.
+
+> **Normative (v1.2.0 — topology change):** the **main queue MUST be declared without any
+> `x-dead-letter-exchange` argument** (nor any other dead-letter argument). Implementations MUST NOT
+> declare a dead-letter-exchange fanout for the DLQ nor bind the DLQ to one.
+>
+> **Rationale:** queue arguments are immutable in RabbitMQ. Declaring `x-dead-letter-exchange` on the
+> main queue makes a library upgrade fail with `PRECONDITION_FAILED` over queues created by an earlier
+> (argument-free) version, forcing a destructive delete/recreate per environment. Keeping the main
+> queue argument-free makes upgrades drop-in — **no broker policy and no manual queue step** in any
+> environment.
 
 1. **RabbitMQ Topology (created automatically on subscribe):**
-   - **Retry queue** (`{queue_name}_retry`): per-queue, durable. Messages carry a per-message `expiration` property so fixed and exponential delays are both supported without a queue-level TTL. Dead-letters back to the main queue via the default exchange after the delay expires.
-   - **Dead-letter exchange** (`{appName}_dlx`): per-app fanout exchange, durable. All main queues declare `x-dead-letter-exchange` pointing here.
-   - **Dead Letter Queue** (`{appName}_dlq`): per-app, durable queue bound to the DLX. RabbitMQ automatically attaches `x-death` headers to every dead-lettered message containing the origin queue name, reason, timestamp, and routing keys — no origin information is lost.
+   - **Main queue** (`{queue_name}`): per-binding, durable. Declared with **no** `x-dead-letter-exchange`
+     (and no other dead-letter) argument.
+   - **Retry queue** (`{queue_name}_retry`): per-queue, durable. Messages carry a per-message `expiration`
+     property so fixed and exponential delays are both supported without a queue-level TTL. Dead-letters
+     back to the main queue via the **default** exchange after the delay expires.
+   - **Dead Letter Queue** (`{appName}_dlq`): per-app, durable, **plain** queue. The library publishes to
+     it through the default exchange (routing key = the DLQ name); it is **not** bound to any DLX. Each
+     dead-lettered message carries an `x-event-people-retries` header with the retry count at the time it
+     was dead-lettered.
 
 2. **Routing flow:**
    - `fail()` with retries remaining → calculate delay → publish to `{queue_name}_retry` with `expiration` = delay ms → ack current delivery
-   - `fail()` with retries exhausted → `nack(requeue=false)` → DLX routes to `{appName}_dlq`
-   - `reject()` → `nack(requeue=false)` → DLX routes to `{appName}_dlq`
+   - `fail()` with retries exhausted → publish the message to `{appName}_dlq` (default exchange) → **ack** the original delivery
+   - `reject()` → publish the message to `{appName}_dlq` (default exchange) → **ack** the original delivery
+   - **Fallback:** if the DLQ publish fails (or no channel/DLQ name is available), the implementation falls
+     back to `nack(requeue=false)` so the message is not silently lost.
 
 3. **Processing DLQ Events:**
    - Messages in the DLQ are not automatically reprocessed.
    - To reprocess dead messages, move them back to the original queue manually or via an administrative tool.
-   - The `x-death` headers provide full context about the failure chain.
+   - The `x-event-people-retries` header records how many retries were attempted before the message was
+     dead-lettered.
 
 4. **Logging and Alerts:**
    - The library logs all events moved to the DLQ with detailed error information.
