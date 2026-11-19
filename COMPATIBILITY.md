@@ -12,7 +12,7 @@ Legend: ✅ Implemented · ⚠️ Has deviations or minor issues · 🔴 Has cri
 | Emitter | ✅ | ✅ | ✅ | ✅ |
 | Daemon | ✅ | ✅ | ✅ | ✅ |
 | Context (interface) | ✅ | ✅ | ✅ | ✅ |
-| BaseListener | ✅ | ⚠️ | ⚠️ | ⚠️ |
+| BaseListener | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
 | ListenersManager | ✅ | ✅ | ✅ | ✅ |
 | BaseBroker | ✅ | ✅ | ✅ | ✅ |
 | RabbitBroker | ✅ | ✅ | ✅ | ✅ |
@@ -39,6 +39,7 @@ against the code for this revision.
 **Ruby**
 - **Config:** `configure` replaces the whole configuration: an option left out returns to its default instead of keeping the current value. No input validation.
 - **Listener:** `on` with a 3-part event name subscribes only to the `.all` variant, not to `.{appName}`.
+- **BaseListener:** the binding method is named `bind(method, event_name)`, not `bind_event`.
 
 **Python**
 - **BaseListener:** `bind_event(event_name, callback)` takes its arguments in the opposite order of `bindEvent(function, eventName)`; `callback(function, event, context=None)` has an extra parameter.
@@ -46,7 +47,7 @@ against the code for this revision.
 
 **Go**
 - **Config:** `Configure` does not validate, and a zero value means "not set", so `initialDelay = 0` cannot be configured.
-- **Listener:** `ListenTo(eventName, callback, retryConfig...)` still accepts retry settings as an argument.
+- **Listener:** `ListenTo(eventName, callback, retryConfig...)` still accepts retry settings as an argument. It consumes from a queue that already exists (the binding is done by `SubscribeTo`), so it does not expand a 3-part event name to the `.all` and `.{appName}` variants either.
 - **BaseListener:** the per-listener retry settings are an instance field, and `BindEvent` registers a listener without them, so a listener bound that way always uses the `Config` values.
 
 **Node**
