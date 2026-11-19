@@ -108,7 +108,7 @@ components:
         status: stable
       - name: dlqName
         type: string
-        description: "Default DLQ name. Defaults to {queue_name}_dlq if not set."
+        description: "Default DLQ name. Defaults to {appName}_dlq if not set."
         status: stable
     methods:
       - name: getBroker
@@ -118,11 +118,12 @@ components:
         signature: "configure(options)"
         description: >
           Optional. Sets the global retry defaults in code. Accepted options, all optional:
-          maxAttempts (integer >= 1), initialDelay (integer >= 0, milliseconds),
-          delayStrategy (fixed or exponential) and dlqName (non-empty string). Connection
-          settings (appName, url, vhostName, topicName) are read only from environment
-          variables and cannot be set here. Retry defaults are no longer read from
-          environment variables.
+          maxAttempts (integer), initialDelay (integer, milliseconds), delayStrategy
+          (fixed or exponential) and dlqName (string). Implementations SHOULD reject
+          invalid values (maxAttempts < 1, negative initialDelay, unknown delayStrategy,
+          empty dlqName). Connection settings (appName, url, vhostName, topicName) are
+          read only from environment variables and cannot be set here. Retry defaults
+          are no longer read from environment variables.
         status: stable
       - name: getRetryConfig
         returns: "{ maxAttempts, initialDelay, delayStrategy, dlqName }"
@@ -194,8 +195,11 @@ components:
         description: >
           Subscribe to a specific event or pattern. When eventName has 3 parts,
           the lib subscribes to both the .all and .{appName} variants automatically.
-          Retry settings come from Config (see Config.configure); they are not
-          parameters of this method.
+          Retry settings are not parameters of this method: they come from the
+          BaseListener class attributes when the subscription is made through a
+          listener class, and from Config otherwise. An implementation may accept an
+          extra optional argument carrying the listener class, used internally by
+          ListenersManager to resolve the per-listener settings.
         params:
           - { name: eventName, type: string, required: true }
           - { name: callback, type: function, required: true }
@@ -478,23 +482,21 @@ components:
         default: 600000
         description: "Maximum delay in milliseconds (10 minutes)."
         status: stable
-      - name: currentAttempt
-        status: stable
     methods:
       - name: shouldRetry
-        description: "Returns true if currentAttempt < maxAttempts."
+        signature: "shouldRetry(retryCount)"
+        description: "Returns true if retryCount < maxAttempts."
         status: stable
       - name: getNextDelay
+        signature: "getNextDelay(retryCount)"
         description: >
           Calculates next delay in milliseconds.
-          Exponential: min(initialDelay * (5 ^ currentAttempt), maxDelay).
+          Exponential: min(initialDelay * (5 ^ retryCount), maxDelay).
           Fixed: initialDelay (constant).
         status: stable
-      - name: incrementAttempt
-        status: stable
-      - name: reset
-        description: "Resets currentAttempt to 0 for a new event."
-        status: stable
+    notes:
+      - "The component is stateless: the attempt number is the event retryCount, read from the x-event-people-retries header."
+      - "An implementation may keep the attempt as internal state (currentAttempt, incrementAttempt, reset); that is not part of the contract."
 
 # ---------------------------------------------------------------------------
 # Retry and DLQ Defaults
