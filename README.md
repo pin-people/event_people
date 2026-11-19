@@ -114,7 +114,7 @@ The following outlines the key classes/interfaces and their roles within EventPe
 - `maxAttempts`: Number of the default max attempts for each event. Defaults to `3`.
 - `initialDelay`: Default base retry delay in milliseconds. Defaults to `1000`.
 - `delayStrategy`: The default retry delaying strategy. Can be `fixed` or `exponential`.
-- `dlqName`: Name of the default DLQ, if not defined it defaults to `<queue_name>_dlq`. It is only recommended setting this value if you want to concentrate all dead jobs in the same DLQ.
+- `dlqName`: Name of the default DLQ, if not defined it defaults to `{appName}_dlq`. Set it only to send dead messages to a different queue.
 
 **Methods:**
 
@@ -152,12 +152,12 @@ The following outlines the key classes/interfaces and their roles within EventPe
 
 **Responsibilities:**
 
-- Facilitate subscription to events with optional retry and DLQ configurations.
+- Facilitate subscription to events. Retry and DLQ settings are resolved from the listener class and from `Config`, not passed here.
 
 **Methods:**
 
 - `on(eventName, callback)`:  
-  Subscribe to a specific event or pattern with a callback function, including optional parameters for retry and DLQ configurations. If parameters are not provided, default values from `Config` are used internally.
+  Subscribe to a specific event or pattern with a callback function. Retry and DLQ settings are not parameters of this method; see [Configuring Retry and DLQ](#d-configuring-retry-and-dlq).
 
 > **Note:** The `fail()` method within the `Context` interface handles retry and DLQ logic internally. Users do not need to implement retry mechanisms manually.
 
@@ -341,15 +341,12 @@ To support robust retry mechanisms and DLQ functionality internally, the followi
 - `maxAttempts`: Maximum number of retry attempts.
 - `initialDelay`: Initial delay before the first retry (in milliseconds).
 - `maxDelay`: Maximum delay between retries (in milliseconds).
-- `currentAttempt`: Counter for current retry attempt.
 - `dlqName`: Name of the Dead Letter Queue.
 
 **Methods:**
 
-- `shouldRetry()`: Determine if the event should be retried based on `currentAttempt` and `maxAttempts`.
-- `getNextDelay()`: Calculate the next delay to be used in exponential backoff.
-- `incrementAttempt()`: Increase the retry count by one.
-- `reset()`: Reset the retry counter for new events.
+- `shouldRetry(retryCount)`: Determine if the event should be retried, comparing the event `retryCount` with `maxAttempts`.
+- `getNextDelay(retryCount)`: Calculate the next delay to be used in exponential backoff.
 - `moveToDLQ(event)`: Move the failed event to the DLQ.
 
 ---
@@ -495,7 +492,7 @@ To streamline implementation, provide sensible default settings that can be over
 
 - **Retry Attempts:** Default to 3 retries.
 - **Retry Delay Strategy:** Implement exponential backoff and fixed strategies.
-- **DLQ Naming Convention:** Use the original queue name appended with `_dlq` as a suffix.
+- **DLQ Naming Convention:** One DLQ per application, named `{appName}_dlq`.
 - **Max Retry Delay:** Default to 10 minutes (600,000 milliseconds) to prevent excessively long wait times.
 
 **Default Exponential Backoff Attributes:**
@@ -591,7 +588,18 @@ Listener.on("order.service.created", function(event, context) {
 })
 ```
 
-`Config.configure` validates its input: `maxAttempts` is an integer >= 1, `initialDelay` an integer >= 0, `delayStrategy` one of `fixed` or `exponential`, and `dlqName` a non-empty string.
+Implementations should reject invalid values in `Config.configure`: `maxAttempts` below 1, a negative `initialDelay`, an unknown `delayStrategy` or an empty `dlqName`.
+
+**Reading the retry state inside a callback:**
+
+```pseudo
+Listener.on("order.service.created", function(event, context) {
+    if (context.isLastRetry) { notifyOnCall(event.retryCount) }
+    context.fail()
+})
+```
+
+---
 
 ## Future Enhancements
 
