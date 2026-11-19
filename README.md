@@ -111,13 +111,15 @@ The following outlines the key classes/interfaces and their roles within EventPe
 - `vhostName`: Virtual host name for broker connection.
 - `URL`: Connection URL for the broker.
 - `fullURL`: Complete connection string.
-- `maxAttempts`: Number of the default max attempts for each event.
+- `maxAttempts`: Number of the default max attempts for each event. Defaults to `3`.
+- `initialDelay`: Default base retry delay in milliseconds. Defaults to `1000`.
 - `delayStrategy`: The default retry delaying strategy. Can be `fixed` or `exponential`.
 - `dlqName`: Name of the default DLQ, if not defined it defaults to `<queue_name>_dlq`. It is only recommended setting this value if you want to concentrate all dead jobs in the same DLQ.
 
 **Methods:**
 
 - `getBroker()`: Retrieve broker configuration.
+- `configure(options)`: Optional. Set the global retry defaults in code (`maxAttempts`, `initialDelay`, `delayStrategy`, `dlqName`). Connection settings are read only from environment variables and cannot be set here. Retry defaults are not read from environment variables.
 - `getRetryConfig()`: Retrieves default configurations for retries and DLQs.
 
 #### 3. Event
@@ -154,7 +156,7 @@ The following outlines the key classes/interfaces and their roles within EventPe
 
 **Methods:**
 
-- `on(eventName, callback, maxAttempts = null, delayStrategy = null, dlqName = null)`:  
+- `on(eventName, callback)`:  
   Subscribe to a specific event or pattern with a callback function, including optional parameters for retry and DLQ configurations. If parameters are not provided, default values from `Config` are used internally.
 
 > **Note:** The `fail()` method within the `Context` interface handles retry and DLQ logic internally. Users do not need to implement retry mechanisms manually.
@@ -214,7 +216,7 @@ The following outlines the key classes/interfaces and their roles within EventPe
 
 **Methods:**
 
-- `callback(function, event, maxAttempts = null, delayStrategy = null, dlqName = null)`: Default callback to receive and encapsulate the return from the Broker and then prepare and send the actual event data to the user's defined callback.
+- `callback(function, event)`: Default callback to receive and encapsulate the return from the Broker and then prepare and send the actual event data to the user's defined callback.
 - `bindEvent(function, event_name)`: Bind a function to a specific event name.
 - `success()`: Mark event processing as successful.
 - `fail()`: Mark event processing as failed, triggering internal retry and DLQ handling.
@@ -542,135 +544,54 @@ EventPeople uses RabbitMQ's native dead-letter exchange (DLX) mechanism for DLQ 
    - The library logs all events moved to the DLQ with detailed error information.
    - It's recommended to set up alerting systems to notify relevant stakeholders when events are sent to the DLQ, enabling prompt investigation.
 
-#### D. Simplified Listener Interface for Retry and DLQ
+#### D. Configuring Retry and DLQ
 
-To simplify the integration of retry and DLQ functionalities, **EventPeople** allows listeners to receive only essential parameters during event binding. The framework internally manages the instantiation and configuration of retry and DLQ components based on these parameters. If parameters are not provided, default configurations from the `Config` class are applied.
+Retry and DLQ settings are never parameters of `Listener.on` or of `BaseListener.callback`. They are resolved in this order:
 
-**Listener Binding with Retry and DLQ:**
+1. **Per listener:** class-level attributes of a `BaseListener` subclass (`maxAttempts`, `initialDelay`, `delayStrategy`, `dlqName`). Any attribute left unset falls through.
+2. **Global:** the values set with `Config.configure(options)`.
+3. **Built-in defaults:** `maxAttempts = 3`, `initialDelay = 1000` ms, `delayStrategy = exponential`, `dlqName = {appName}_dlq`.
+
+Retry defaults are not read from environment variables. `RABBIT_EVENT_PEOPLE_MAX_RETRIES` and `RABBIT_EVENT_PEOPLE_RETRY_TTL_MS` were removed in spec v1.2.0.
+
+**Global defaults in code:**
 
 ```pseudo
-// Applying Retry and DLQ to a Listener with Custom Configurations
-Listener.on(
-    "order.order_service.updated.inventory_service",
-    callbackFunction,
-    maxAttempts = 5,
-    delayStrategy = "exponential", // Options: "fixed", "exponential"
-    dlqName = "order_service_dlq"
-)
+Config.configure({
+    maxAttempts: 5,
+    initialDelay: 2000,
+    delayStrategy: "exponential",
+    dlqName: "orders_dlq"
+})
 ```
 
-**Interface Parameters:**
-
-- **`maxAttempts` (Integer):** Maximum number of retry attempts. Defaults to `Config.defaultRetryConfig.maxAttempts` if not provided.
-- **`delayStrategy` (String):** Strategy for delay between retries. Available options:
-  - `"fixed"`: Fixed delay between retries.
-  - `"exponential"`: Exponential backoff starting at 1 second (default).
-- **`dlqName` (String):** Name of the Dead Letter Queue. Defaults to the original queue name with `_dlq` suffix if not provided.
-
-**Default Exponential Backoff Configuration:**
-
-- **Initial Delay:** 1 second (1000 milliseconds)
-- **Multiplier:** 5 (delay  grows 5 times with each retry)
-- **Max Delay:** 10 minutes (600,000 milliseconds)
-
-**Usage Example:**
+**Per-listener override:**
 
 ```pseudo
-// Define callback
-function callbackFunction(event, context) {
-    // Process event
-    if (createUser(event.payload)) {
-        context.success()
-    } else {
-        context.fail()
+class OrderListener extends BaseListener {
+    static maxAttempts = 5
+    static initialDelay = 2000
+    static delayStrategy = "fixed"
+
+    handle(event) {
+        process(event)
+        this.success()
     }
 }
 
-// Subscribe to an event
-Listener.on(
-    "user.auth_service.created.all",
-    callbackFunction,
-    maxAttempts = 5,
-    delayStrategy = "exponential",
-    dlqName = "user_service_dlq"
-)
+OrderListener.bindEvent("handle", "order.service.created")
 ```
 
-**Handling Retry Count and `isLastRetry` within Listeners:**
-
-While the retry logic is handled internally, listeners can still access the `retryCount` and `isLastRetry` attributes within the `Event` object to make informed decisions during event processing.
+**Plain subscription, using the global settings:**
 
 ```pseudo
-// Listening to an Event with Access to retryCount and isLastRetry
-Listener.on(
-    "user.auth_service.created.all",
-    function(event, context) {
-        // Optional: Customize behavior based on retry count
-        if (event.retryCount > 0) {
-            log("Retry attempt #" + event.retryCount + " for event: " + event.name)
-        }
-    
-        // Process event
-        createUser(event.payload)
-        context.success()
-    },
-    maxAttempts = 3,
-    delayStrategy = "exponential", // "fixed" or "exponential"
-    dlqName = "user_service_dlq"
-)
+Listener.on("order.service.created", function(event, context) {
+    process(event)
+    context.success()
+})
 ```
 
-**Example with `isLastRetry`:**
-
-```pseudo
-// Listening to an Event with Access to maxRetries and isLastRetry
-Listener.on(
-    "order.order_service.updated.inventory_service",
-    function(event, context) {
-        try {
-            // Optional: Log retry attempts
-            if (event.retryCount > 0) {
-                log("Retry attempt #" + event.retryCount + " for event: " + event.name)
-            }
-
-            // Process event
-            updateInventory(event.payload)
-            context.success()
-        } catch (error) {
-            // Customize behavior on the last retry
-            if (event.isLastRetry) {
-                log("Final retry attempt reached for event: " + event.name)
-                // Perform additional actions if needed before failing
-            }
-
-            raise error // Whenever an error is raised within the callback the Listener calls fail() automatically
-        }
-    },
-    maxAttempts = 5,
-    delayStrategy = "exponential", // "fixed" or "exponential"
-    dlqName = "inventory_service_dlq"
-)
-```
-
-**Default Configuration Handling:**
-
-If `maxAttempts`, `delayStrategy`, or `dlqName` are not provided during listener binding, **EventPeople** automatically applies the default configurations defined in the `Config` class.
-
-```pseudo
-// Listener Binding without Custom Configurations (Defaults Applied)
-Listener.on(
-    "product.inventory_system.updated.#",
-    function(event, context) {
-        // Process event
-        updateInventory(event.payload)
-        context.success()
-    }
-)
-```
-
-In this example, since `maxAttempts`, `delayStrategy`, and `dlqName` are not provided, **EventPeople** utilizes the default settings from the `Config` class. The DLQ name defaults to the original queue name with a `_dlq` suffix.
-
----
+`Config.configure` validates its input: `maxAttempts` is an integer >= 1, `initialDelay` an integer >= 0, `delayStrategy` one of `fixed` or `exponential`, and `dlqName` a non-empty string.
 
 ## Future Enhancements
 

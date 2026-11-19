@@ -1,5 +1,5 @@
-spec_version: "1.1.0"
-released_at: "2026-06-11"
+spec_version: "1.2.0"
+released_at: "2026-11-19"
 
 # EventPeople Interface Contract
 #
@@ -63,15 +63,6 @@ environment_variables:
   RABBIT_URL:
     description: "RabbitMQ connection URL (e.g. amqp://user:pass@host)."
     required: true
-  RABBIT_EVENT_PEOPLE_MAX_RETRIES:
-    description: "Maximum retry attempts before dead-lettering. Overrides Config.maxAttempts default."
-    required: false
-    default: 3
-  RABBIT_EVENT_PEOPLE_RETRY_TTL_MS:
-    description: "Base delay in milliseconds for retry queues. Used as fixed delay or as initialDelay for exponential backoff."
-    required: false
-    default: 1000
-
 # ---------------------------------------------------------------------------
 # Components
 # ---------------------------------------------------------------------------
@@ -103,24 +94,39 @@ components:
         type: integer
         default: 3
         description: "Default maximum retry attempts per event."
-        status: pending
+        status: stable
+      - name: initialDelay
+        type: integer
+        default: 1000
+        description: "Default base retry delay in milliseconds. Fixed delay, or the first step of the exponential backoff."
+        status: stable
       - name: delayStrategy
         type: string
         default: "exponential"
         options: [fixed, exponential]
         description: "Default retry delay strategy."
-        status: pending
+        status: stable
       - name: dlqName
         type: string
         description: "Default DLQ name. Defaults to {queue_name}_dlq if not set."
-        status: pending
+        status: stable
     methods:
       - name: getBroker
         returns: broker_instance
         status: stable
+      - name: configure
+        signature: "configure(options)"
+        description: >
+          Optional. Sets the global retry defaults in code. Accepted options, all optional:
+          maxAttempts (integer >= 1), initialDelay (integer >= 0, milliseconds),
+          delayStrategy (fixed or exponential) and dlqName (non-empty string). Connection
+          settings (appName, url, vhostName, topicName) are read only from environment
+          variables and cannot be set here. Retry defaults are no longer read from
+          environment variables.
+        status: stable
       - name: getRetryConfig
-        returns: "{ maxAttempts, delayStrategy, dlqName }"
-        status: pending
+        returns: "{ maxAttempts, initialDelay, delayStrategy, dlqName }"
+        status: stable
 
   Event:
     type: class
@@ -153,7 +159,7 @@ components:
         type: integer
         default: 0
         description: "Number of retry attempts. Auto-initialized to 0 on construction."
-        status: pending
+        status: stable
     methods:
       - name: payload
         returns: "JSON string: { headers, body }"
@@ -177,24 +183,22 @@ components:
         status: stable
       - name: incrementRetryCount
         description: "Increases retryCount by one."
-        status: pending
+        status: stable
 
   Listener:
     type: static_class
     description: "Entry point for subscribing to events."
     methods:
       - name: on
-        signature: "on(eventName, callback, maxAttempts=null, delayStrategy=null, dlqName=null)"
+        signature: "on(eventName, callback)"
         description: >
           Subscribe to a specific event or pattern. When eventName has 3 parts,
           the lib subscribes to both the .all and .{appName} variants automatically.
-          Retry params fall back to Config defaults when omitted.
+          Retry settings come from Config (see Config.configure); they are not
+          parameters of this method.
         params:
           - { name: eventName, type: string, required: true }
           - { name: callback, type: function, required: true }
-          - { name: maxAttempts, type: integer, required: false, status: pending }
-          - { name: delayStrategy, type: string, required: false, status: pending }
-          - { name: dlqName, type: string, required: false, status: pending }
         status: stable
 
   Emitter:
@@ -228,11 +232,11 @@ components:
       - name: maxRetries
         type: integer
         description: "Total retry attempts configured for this listener."
-        status: pending
+        status: stable
       - name: isLastRetry
         type: boolean
         description: "True when this is the final retry attempt."
-        status: pending
+        status: stable
     methods:
       - name: success
         description: "Acknowledge successful processing (ack). Removes message from queue."
@@ -257,9 +261,30 @@ components:
       - name: context
         type: Context
         status: stable
+      - name: maxAttempts
+        type: integer
+        scope: class
+        description: "Optional per-listener override of Config.maxAttempts."
+        status: stable
+      - name: initialDelay
+        type: integer
+        scope: class
+        description: "Optional per-listener override of Config.initialDelay (milliseconds)."
+        status: stable
+      - name: delayStrategy
+        type: string
+        scope: class
+        options: [fixed, exponential]
+        description: "Optional per-listener override of Config.delayStrategy."
+        status: stable
+      - name: dlqName
+        type: string
+        scope: class
+        description: "Optional per-listener override of Config.dlqName."
+        status: stable
     methods:
       - name: callback
-        signature: "callback(function, event, maxAttempts=null, delayStrategy=null, dlqName=null)"
+        signature: "callback(function, event)"
         description: "Wraps broker delivery into Event + Context and dispatches to the user method."
         status: stable
       - name: bindEvent
@@ -351,11 +376,11 @@ components:
       - name: channel
       - name: deliveryInfo
       - name: maxRetries
-        status: pending
+        status: stable
       - name: isLastRetry
-        status: pending
+        status: stable
       - name: dlqName
-        status: pending
+        status: stable
     methods:
       - name: success
         description: "basic_ack on the delivery tag."
@@ -416,7 +441,7 @@ components:
 
   RetryManager:
     type: internal_static_class
-    status: pending
+    status: stable
     description: >
       Internal component managing retry policies and dead-lettering. Not exposed to users.
       Implemented via a per-queue retry queue (custom) and RabbitMQ native DLX (for DLQ routing).
@@ -442,34 +467,34 @@ components:
         x-dead-letter-exchange: "{appName}_dlx"
     attributes:
       - name: maxAttempts
-        status: pending
+        status: stable
       - name: initialDelay
         type: integer
         default: 1000
-        description: "Initial delay in milliseconds (from RABBIT_EVENT_PEOPLE_RETRY_TTL_MS)."
-        status: pending
+        description: "Initial delay in milliseconds (BaseListener.initialDelay when set, otherwise Config.initialDelay)."
+        status: stable
       - name: maxDelay
         type: integer
         default: 600000
         description: "Maximum delay in milliseconds (10 minutes)."
-        status: pending
+        status: stable
       - name: currentAttempt
-        status: pending
+        status: stable
     methods:
       - name: shouldRetry
         description: "Returns true if currentAttempt < maxAttempts."
-        status: pending
+        status: stable
       - name: getNextDelay
         description: >
           Calculates next delay in milliseconds.
           Exponential: min(initialDelay * (5 ^ currentAttempt), maxDelay).
           Fixed: initialDelay (constant).
-        status: pending
+        status: stable
       - name: incrementAttempt
-        status: pending
+        status: stable
       - name: reset
         description: "Resets currentAttempt to 0 for a new event."
-        status: pending
+        status: stable
 
 # ---------------------------------------------------------------------------
 # Retry and DLQ Defaults
