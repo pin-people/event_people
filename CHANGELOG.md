@@ -38,7 +38,7 @@ since June 2026. No behaviour is introduced here that the implementations do not
 - Retry resolution order: `BaseListener` class attributes, then `Config.configure`, then the
   built-in defaults.
 - Every member introduced as `pending` in v1.1.0 (retry attributes and methods of `Config`,
-  `Event`, `Context`, `RabbitContext` and `RetryManager`) is now `stable`.
+  `Event`, `Context`, `RabbitContext` and the remaining members of `RetryManager`) is now `stable`.
 - `RetryManager` is described as stateless: `shouldRetry(retryCount)` and
   `getNextDelay(retryCount)`. The stateful members `currentAttempt`, `incrementAttempt` and `reset`
   left the contract; an implementation may keep them internally.
