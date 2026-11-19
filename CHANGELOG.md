@@ -17,6 +17,41 @@ When a MAJOR or MINOR version is released, all implementations should update the
 
 ---
 
+## [1.2.0] — 2026-11-19
+
+Brings the definition in line with what the four implementations have declared as spec v1.2.0
+since June 2026. No behaviour is introduced here that the implementations do not already have.
+
+### Added
+
+- `Config.configure(options)`: optional, sets the global retry defaults in code (`maxAttempts`,
+  `initialDelay`, `delayStrategy`, `dlqName`). Connection settings stay environment-only.
+- `Config.initialDelay` (integer, milliseconds, default `1000`); `Config.getRetryConfig()` now
+  returns it.
+- `BaseListener` class-level retry attributes `maxAttempts`, `initialDelay`, `delayStrategy` and
+  `dlqName`, which override the `Config` values for that listener.
+
+### Changed
+
+- `Listener.on(eventName, callback)`: the retry parameters were removed from the signature.
+- `BaseListener.callback(function, event)`: the retry parameters were removed from the signature.
+- Retry resolution order: `BaseListener` class attributes, then `Config.configure`, then the
+  built-in defaults.
+- Every member introduced as `pending` in v1.1.0 (retry attributes and methods of `Config`,
+  `Event`, `Context`, `RabbitContext` and `RetryManager`) is now `stable`.
+
+### Removed
+
+- Environment variables `RABBIT_EVENT_PEOPLE_MAX_RETRIES` and `RABBIT_EVENT_PEOPLE_RETRY_TTL_MS`.
+  Retry defaults are no longer read from the environment.
+
+### Fixed
+
+- `spec/contract.yml` header carried `spec_version: "1.1.0"` while `SPEC_VERSION` said `1.1.1`.
+  Both now say `1.2.0`.
+
+---
+
 ## [1.1.1] — 2026-06-12
 
 ### Fixed
